@@ -151,6 +151,15 @@ pub fn build(b: *std.Build) !void {
         ).step);
     }
 
+    // libghostty-renderer static lib
+    if (!config.target.result.cpu.arch.isWasm()) {
+        const libghostty_renderer = try buildpkg.GhosttyLibRenderer.initStatic(
+            b,
+            &deps,
+        );
+        libghostty_renderer.install();
+    }
+
     // Helpgen
     if (config.emit_helpgen) deps.help_strings.install();
 

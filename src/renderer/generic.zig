@@ -104,7 +104,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         config: DerivedConfig,
 
         /// The mailbox for communicating with the window.
-        surface_mailbox: apprt.surface.Mailbox,
+        /// When null, surface notifications are silently dropped (standalone mode).
+        surface_mailbox: ?apprt.surface.Mailbox,
 
         /// Current font metrics defining our grid.
         grid_metrics: font.Metrics,
@@ -1449,11 +1450,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // After the graphics API is complete (so we defer) we want to
             // update our scrollbar state.
             defer if (self.scrollbar_dirty) {
-                // Fail instantly if the surface mailbox if full, we'll just
-                // get it on the next frame.
-                if (self.surface_mailbox.push(.{
-                    .scrollbar = self.scrollbar,
-                }, .instant) > 0) self.scrollbar_dirty = false;
+                if (self.surface_mailbox) |mb| {
+                    if (mb.push(.{
+                        .scrollbar = self.scrollbar,
+                    }, .instant) > 0) self.scrollbar_dirty = false;
+                } else {
+                    self.scrollbar_dirty = false;
+                }
             };
 
             // Let our graphics API do any bookkeeping, etc.
@@ -1732,9 +1735,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Our health value changed, so we notify the surface so that it
                 // can do something about it.
-                _ = self.surface_mailbox.push(.{
-                    .renderer_health = health,
-                }, .{ .forever = {} });
+                if (self.surface_mailbox) |mb| {
+                    _ = mb.push(.{
+                        .renderer_health = health,
+                    }, .{ .forever = {} });
+                }
             }
 
             // Always release our semaphore
