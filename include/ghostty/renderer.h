@@ -1,12 +1,9 @@
 /**
  * libghostty-renderer
  *
- * Terminal emulation + GPU-ready cell buffer generation.
- * Platform-independent C API.
- *
- * Level 1: bind a native surface, library draws everything.
- * Level 2: library builds cell buffers + glyph atlas,
- *          consumer owns the GPU pipeline.
+ * GPU-ready cell buffer generation from a terminal + font system.
+ * The consumer provides a GhosttyTerminal from libghostty-vt and gets
+ * back cell arrays + glyph atlas textures for their own GPU pipeline.
  */
 
 #ifndef GHOSTTY_RENDERER_H
@@ -24,19 +21,18 @@ extern "C" {
  * Handles
  * ================================================================ */
 
+typedef struct GhosttyFontGridImpl *GhosttyFontGrid;
 typedef struct GhosttyRendererImpl *GhosttyRenderer;
-typedef struct GhosttyTerminalImpl *GhosttyTerminal;
+
+/* GhosttyTerminal from libghostty-vt (opaque, passed through) */
+typedef void *GhosttyTerminal;
 
 /* ================================================================
  * Basic types
  * ================================================================ */
 
-typedef struct { uint8_t r, g, b; } GhosttyColor;
-typedef struct { GhosttyColor color; bool has; } GhosttyOptColor;
-
-/* ================================================================
- * Enums
- * ================================================================ */
+typedef struct { uint8_t r, g, b; } GhosttyRendererRGB;
+typedef struct { GhosttyRendererRGB color; bool has; } GhosttyRendererOptRGB;
 
 typedef enum {
     GHOSTTY_COLORSPACE_SRGB = 0,
@@ -56,107 +52,79 @@ typedef enum {
 } GhosttyPaddingColor;
 
 /* ================================================================
- * Renderer configuration
- *
- * Zero-init produces usable defaults.
- * All strings are copied during new(); caller may free after.
+ * Font grid config (zero-init for defaults)
  * ================================================================ */
 
 typedef struct {
-    /* Surface */
+    float       font_size;             /* 0 -> 13.0 */
+    const char *font_family;           /* NULL -> system default */
+    const char *font_family_bold;
+    const char *font_family_italic;
+    const char *font_family_bold_italic;
+    const char *font_features;         /* comma-separated */
+    bool        font_thicken;
+    double      content_scale;         /* 0 -> 1.0 */
+} GhosttyFontGridConfig;
+
+typedef struct {
+    float cell_width, cell_height, cell_baseline;
+    float underline_position, underline_thickness;
+    float strikethrough_position, strikethrough_thickness;
+} GhosttyFontMetrics;
+
+/* ================================================================
+ * Font grid API
+ * ================================================================ */
+
+GhosttyFontGrid ghostty_font_grid_new(const GhosttyFontGridConfig *config);
+void ghostty_font_grid_free(GhosttyFontGrid grid);
+void ghostty_font_grid_get_metrics(GhosttyFontGrid grid, GhosttyFontMetrics *out);
+const uint8_t *ghostty_font_grid_atlas_grayscale(GhosttyFontGrid grid,
+                                                  uint32_t *size, bool *modified);
+const uint8_t *ghostty_font_grid_atlas_color(GhosttyFontGrid grid,
+                                              uint32_t *size, bool *modified);
+void ghostty_font_grid_set_size(GhosttyFontGrid grid, float points);
+
+/* ================================================================
+ * Renderer config (zero-init for defaults)
+ * ================================================================ */
+
+typedef struct {
     uint32_t width_px;                 /* 0 -> 800 */
     uint32_t height_px;                /* 0 -> 600 */
     double   content_scale;            /* 0 -> 1.0 */
+    void    *native_view;              /* NSView* on macOS, NULL for headless */
 
-    /* Font */
-    float       font_size;             /* 0 -> 13.0 */
-    const char *font_family;           /* NULL -> system default */
-    const char *font_family_bold;      /* NULL -> derive from regular */
-    const char *font_family_italic;    /* NULL -> derive from regular */
-    const char *font_family_bold_italic;
-    const char *font_features;         /* comma-separated: "ss01,liga" */
-    bool        font_thicken;
-    uint8_t     font_thicken_strength; /* 0 -> 127 */
+    GhosttyRendererRGB    background;
+    GhosttyRendererRGB    foreground;
+    GhosttyRendererOptRGB cursor_color;
+    GhosttyRendererOptRGB cursor_text;
+    GhosttyRendererOptRGB selection_background;
+    GhosttyRendererOptRGB selection_foreground;
+    GhosttyRendererOptRGB bold_color;
 
-    /* Colors */
-    GhosttyColor    background;
-    GhosttyColor    foreground;
-    GhosttyOptColor cursor_color;
-    GhosttyOptColor cursor_text;
-    GhosttyOptColor selection_background;
-    GhosttyOptColor selection_foreground;
-    GhosttyOptColor bold_color;
+    GhosttyRendererRGB search_match_bg, search_match_fg;
+    GhosttyRendererRGB search_selected_bg, search_selected_fg;
 
-    /* Search colors */
-    GhosttyColor search_match_bg;
-    GhosttyColor search_match_fg;
-    GhosttyColor search_selected_bg;
-    GhosttyColor search_selected_fg;
-
-    /* Opacity */
-    float background_opacity;          /* 0 -> 1.0 */
-    float cursor_opacity;              /* 0 -> 1.0 */
-    float faint_opacity;               /* 0 -> 0.5 */
-
-    /* Rendering */
-    float               min_contrast;  /* 0 -> 1.0 */
+    float background_opacity, cursor_opacity, faint_opacity;
+    float               min_contrast;
     GhosttyColorspace   colorspace;
     GhosttyBlending     alpha_blending;
     GhosttyPaddingColor padding_color;
-
-    /* Behavior */
-    bool scroll_to_bottom_on_output;
 } GhosttyRendererConfig;
 
 /* ================================================================
- * Renderer lifecycle
+ * Renderer API
  * ================================================================ */
 
-/** Create a renderer.
- *  native_handle: platform-specific window handle (macOS: NSView*).
- *                 May be NULL for headless / Level 2 only use. */
-GhosttyRenderer ghostty_renderer_new(const GhosttyRendererConfig *config,
-                                     void *native_handle);
+GhosttyRenderer ghostty_renderer_new(GhosttyFontGrid grid,
+                                     const GhosttyRendererConfig *config);
 void ghostty_renderer_free(GhosttyRenderer r);
-
 void ghostty_renderer_set_terminal(GhosttyRenderer r, GhosttyTerminal t);
-void ghostty_renderer_resize(GhosttyRenderer r,
-                             uint32_t width_px, uint32_t height_px,
-                             double content_scale);
+void ghostty_renderer_resize(GhosttyRenderer r, uint32_t width_px, uint32_t height_px);
+void ghostty_renderer_update_frame(GhosttyRenderer r, bool cursor_blink_visible);
 
-/* ================================================================
- * Theme
- * ================================================================ */
-
-bool ghostty_renderer_load_theme(GhosttyRenderer r, const char *name);
-bool ghostty_renderer_load_theme_file(GhosttyRenderer r, const char *path);
-
-/* ================================================================
- * Runtime config updates
- * ================================================================ */
-
-void ghostty_renderer_set_font_size(GhosttyRenderer r, float points);
-void ghostty_renderer_set_background(GhosttyRenderer r,
-                                     uint8_t red, uint8_t green, uint8_t blue);
-void ghostty_renderer_set_foreground(GhosttyRenderer r,
-                                     uint8_t red, uint8_t green, uint8_t blue);
-void ghostty_renderer_set_background_opacity(GhosttyRenderer r, float o);
-void ghostty_renderer_set_min_contrast(GhosttyRenderer r, float c);
-void ghostty_renderer_set_palette(GhosttyRenderer r,
-                                  const GhosttyColor palette[256]);
-
-/* ================================================================
- * Level 1: library draws
- * ================================================================ */
-
-void ghostty_renderer_update_frame(GhosttyRenderer r);
-void ghostty_renderer_draw_frame(GhosttyRenderer r);
-
-/* ================================================================
- * Level 2: consumer draws
- *
- * Call update_frame() first. Pointers valid until next update_frame().
- * ================================================================ */
+/* Cell buffer output (pointers valid until next update_frame) */
 
 typedef uint8_t GhosttyRendererCellBg[4];
 
@@ -168,6 +136,7 @@ typedef struct {
     uint8_t  color[4];
     uint8_t  atlas;
     uint8_t  flags;
+    uint8_t  _pad[2];
 } GhosttyRendererCellText;
 
 typedef struct {
@@ -181,65 +150,19 @@ typedef struct {
     bool     cursor_wide;
 } GhosttyRendererFrameData;
 
-const GhosttyRendererCellBg *ghostty_renderer_get_bg_cells(
-    GhosttyRenderer r, uint32_t *count);
-const GhosttyRendererCellText *ghostty_renderer_get_text_cells(
-    GhosttyRenderer r, uint32_t *count);
-void ghostty_renderer_get_frame_data(
-    GhosttyRenderer r, GhosttyRendererFrameData *out);
-const uint8_t *ghostty_renderer_get_atlas_grayscale(
-    GhosttyRenderer r, uint32_t *size, bool *modified);
-const uint8_t *ghostty_renderer_get_atlas_color(
-    GhosttyRenderer r, uint32_t *size, bool *modified);
+const GhosttyRendererCellBg *ghostty_renderer_bg_cells(GhosttyRenderer r, uint32_t *count);
+const GhosttyRendererCellText *ghostty_renderer_text_cells(GhosttyRenderer r, uint32_t *count);
+void ghostty_renderer_frame_data(GhosttyRenderer r, GhosttyRendererFrameData *out);
 
-/* ================================================================
- * Terminal lifecycle & I/O
- * ================================================================ */
+/* Theme & runtime config */
 
-GhosttyTerminal ghostty_terminal_new(uint16_t cols, uint16_t rows,
-                                     uint32_t max_scrollback);
-void ghostty_terminal_free(GhosttyTerminal t);
-void ghostty_terminal_vt_write(GhosttyTerminal t,
-                               const uint8_t *data, size_t len);
-void ghostty_terminal_resize(GhosttyTerminal t,
-                             uint16_t cols, uint16_t rows);
-const uint8_t *ghostty_terminal_drain_responses(
-    GhosttyTerminal t, size_t *out_len);
-void ghostty_terminal_clear_responses(GhosttyTerminal t);
-
-/* ================================================================
- * Terminal state queries
- * ================================================================ */
-
-void ghostty_terminal_get_size(GhosttyTerminal t,
-                               uint16_t *cols, uint16_t *rows);
-void ghostty_terminal_get_cursor(GhosttyTerminal t,
-                                 uint16_t *col, uint16_t *row,
-                                 bool *visible);
-const char *ghostty_terminal_get_title(GhosttyTerminal t, size_t *len);
-
-/* ================================================================
- * Terminal scrolling
- * ================================================================ */
-
-typedef enum {
-    GHOSTTY_SCROLL_LINES = 0,
-    GHOSTTY_SCROLL_TOP = 1,
-    GHOSTTY_SCROLL_BOTTOM = 2,
-    GHOSTTY_SCROLL_PAGE_UP = 3,
-    GHOSTTY_SCROLL_PAGE_DOWN = 4,
-} GhosttyScrollAction;
-
-void ghostty_terminal_scroll(GhosttyTerminal t,
-                             GhosttyScrollAction action,
-                             int32_t delta);
-size_t ghostty_terminal_get_scrollback_rows(GhosttyTerminal t);
-
-/* ================================================================
- * Memory
- * ================================================================ */
-
-void ghostty_free(void *ptr);
+bool ghostty_renderer_load_theme(GhosttyRenderer r, const char *name);
+bool ghostty_renderer_load_theme_file(GhosttyRenderer r, const char *path);
+void ghostty_renderer_set_background(GhosttyRenderer r, uint8_t r_, uint8_t g, uint8_t b);
+void ghostty_renderer_set_foreground(GhosttyRenderer r, uint8_t r_, uint8_t g, uint8_t b);
+void ghostty_renderer_set_background_opacity(GhosttyRenderer r, float opacity);
+void ghostty_renderer_set_min_contrast(GhosttyRenderer r, float contrast);
+void ghostty_renderer_set_palette(GhosttyRenderer r, const GhosttyRendererRGB palette[256]);
 
 #ifdef __cplusplus
 }
