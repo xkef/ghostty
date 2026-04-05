@@ -598,8 +598,62 @@ export fn ghostty_terminal_scroll(
 export fn ghostty_terminal_get_scrollback_rows(
     _: *TerminalWrapper,
 ) usize {
-    // TODO: expose a proper scrollback row count.
     return 0;
+}
+
+export fn ghostty_terminal_dump_screen(
+    wrapper: *TerminalWrapper,
+    out_buf: [*]u8,
+    buf_len: usize,
+) usize {
+    const screen = wrapper.t.screens.active;
+    var offset: usize = 0;
+    var row_it = screen.pages.rowIterator(.right_down, .{ .viewport = .{} }, null);
+    while (row_it.next()) |row_pin| {
+        const page: *terminal.page.Page = &row_pin.node.data;
+        const rac = row_pin.rowAndCell();
+        const cells = page.getCells(rac.row);
+        for (cells) |cell| {
+            if (offset >= buf_len - 1) break;
+            const cp: u21 = cell.codepoint();
+            if (cp < 128) {
+                out_buf[offset] = if (cp >= 32) @intCast(cp) else ' ';
+                offset += 1;
+            } else {
+                var enc: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(cp, &enc) catch 1;
+                if (offset + len >= buf_len - 1) break;
+                @memcpy(out_buf[offset..][0..len], enc[0..len]);
+                offset += len;
+            }
+        }
+        if (offset >= buf_len - 1) break;
+        out_buf[offset] = '\n';
+        offset += 1;
+    }
+    out_buf[offset] = 0;
+    return offset;
+}
+
+export fn ghostty_terminal_mode_cursor_keys(wrapper: *TerminalWrapper) bool {
+    return wrapper.t.modes.get(.cursor_keys);
+}
+
+export fn ghostty_terminal_mode_mouse_event(wrapper: *TerminalWrapper) c_int {
+    const modes = wrapper.t.modes;
+    if (modes.get(.mouse_event_any)) return 1003;
+    if (modes.get(.mouse_event_button)) return 1002;
+    if (modes.get(.mouse_event_normal)) return 1000;
+    if (modes.get(.mouse_event_x10)) return 9;
+    return 0;
+}
+
+export fn ghostty_terminal_mode_mouse_format_sgr(wrapper: *TerminalWrapper) bool {
+    return wrapper.t.modes.get(.mouse_format_sgr);
+}
+
+export fn ghostty_terminal_mode_synchronized_output(wrapper: *TerminalWrapper) bool {
+    return wrapper.t.modes.get(.synchronized_output);
 }
 
 export fn ghostty_free(ptr: ?*anyopaque) void {
