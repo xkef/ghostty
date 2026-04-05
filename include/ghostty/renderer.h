@@ -136,8 +136,10 @@ bool ghostty_renderer_load_theme_file(GhosttyRenderer r, const char *path);
  * ================================================================ */
 
 void ghostty_renderer_set_font_size(GhosttyRenderer r, float points);
-void ghostty_renderer_set_background(GhosttyRenderer r, GhosttyColor c);
-void ghostty_renderer_set_foreground(GhosttyRenderer r, GhosttyColor c);
+void ghostty_renderer_set_background(GhosttyRenderer r,
+                                     uint8_t red, uint8_t green, uint8_t blue);
+void ghostty_renderer_set_foreground(GhosttyRenderer r,
+                                     uint8_t red, uint8_t green, uint8_t blue);
 void ghostty_renderer_set_background_opacity(GhosttyRenderer r, float o);
 void ghostty_renderer_set_min_contrast(GhosttyRenderer r, float c);
 void ghostty_renderer_set_palette(GhosttyRenderer r,

@@ -16,6 +16,8 @@ const font = @import("font/main.zig");
 const terminal = @import("terminal/main.zig");
 const configpkg = @import("config.zig");
 const link = @import("renderer/link.zig");
+const internal_os = @import("os/main.zig");
+const global = @import("global.zig");
 
 const Renderer = rendererpkg.Renderer;
 
@@ -102,15 +104,37 @@ export fn ghostty_renderer_new(
 fn createRenderer(cc: *const CConfig, native_handle: ?*anyopaque) !*RendererState {
     const alloc = std.heap.c_allocator;
 
-    // Load Ghostty config for defaults (font discovery, etc).
-    // We don't read config files -- just get programmatic defaults.
-    // TODO: replace Config.load with a minimal default-only init
-    // once we can build DerivedConfig without the full Config.
+    // Ensure the global resources dir is initialized so that
+    // Config.load can resolve theme files (e.g. "Catppuccin Frappe").
+    if (global.state.resources_dir.app() == null) {
+        global.state.resources_dir = internal_os.resourcesDir(alloc) catch .{};
+    }
+
     var config = try configpkg.Config.load(alloc);
     errdefer config.deinit();
 
     // Apply C config overrides. Only override when the consumer
-    // explicitly set a value (non-zero). Zero means "use ghostty default."
+    // explicitly set a value (non-zero/non-null). Zero means "use ghostty default."
+    if (cc.font_family) |ff| {
+        config.@"font-family" = .{};
+        try config.@"font-family".list.append(alloc, std.mem.span(ff));
+    }
+    if (cc.font_family_bold) |ff| {
+        config.@"font-family-bold" = .{};
+        try config.@"font-family-bold".list.append(alloc, std.mem.span(ff));
+    }
+    if (cc.font_family_italic) |ff| {
+        config.@"font-family-italic" = .{};
+        try config.@"font-family-italic".list.append(alloc, std.mem.span(ff));
+    }
+    if (cc.font_family_bold_italic) |ff| {
+        config.@"font-family-bold-italic" = .{};
+        try config.@"font-family-bold-italic".list.append(alloc, std.mem.span(ff));
+    }
+    if (cc.font_features) |ff| {
+        config.@"font-feature" = .{};
+        try config.@"font-feature".list.append(alloc, std.mem.span(ff));
+    }
     if (cc.font_size > 0) config.@"font-size" = cc.font_size;
     if (cc.background_opacity > 0) config.@"background-opacity" = cc.background_opacity;
     if (cc.min_contrast > 0) config.@"minimum-contrast" = cc.min_contrast;
