@@ -478,11 +478,12 @@ fn parseHexColor(s: []const u8) ?terminal.color.RGB {
 }
 
 fn loadThemeFromFile(state: *RendererState, file: std.fs.File) bool {
-    var buf: [4096]u8 = undefined;
-    var reader = std.io.bufferedReader(file.reader());
-    var any_applied = false;
+    const contents = file.readToEndAlloc(std.heap.c_allocator, 1024 * 64) catch return false;
+    defer std.heap.c_allocator.free(contents);
 
-    while (reader.reader().readUntilDelimiter(&buf, '\n')) |raw_line| {
+    var any_applied = false;
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, &std.ascii.whitespace);
         if (line.len == 0 or line[0] == '#') continue;
 
@@ -510,8 +511,7 @@ fn loadThemeFromFile(state: *RendererState, file: std.fs.File) bool {
             ghostty_renderer_set_foreground(state, rgb.r, rgb.g, rgb.b);
             any_applied = true;
         }
-        // cursor-color, selection-background, etc. can be added later.
-    } else |_| {}
+    }
 
     return any_applied;
 }
