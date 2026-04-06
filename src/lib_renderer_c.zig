@@ -428,17 +428,92 @@ export fn ghostty_renderer_frame_data(state: *RendererState, out: *FrameData) vo
 // ================================================================
 
 export fn ghostty_renderer_load_theme(state: *RendererState, name: [*:0]const u8) bool {
-    _ = state;
-    _ = name;
-    log.warn("load_theme not yet implemented", .{});
-    return false;
+    const name_slice = std.mem.span(name);
+    if (name_slice.len == 0) return false;
+
+    // Try to find the theme file in the resources directory.
+    const resources_dir = std.process.getEnvVarOwned(
+        std.heap.c_allocator,
+        "GHOSTTY_RESOURCES_DIR",
+    ) catch return false;
+    defer std.heap.c_allocator.free(resources_dir);
+
+    const theme_path = std.fs.path.join(std.heap.c_allocator, &.{
+        resources_dir,
+        "themes",
+        name_slice,
+    }) catch return false;
+    defer std.heap.c_allocator.free(theme_path);
+
+    const file = std.fs.cwd().openFile(theme_path, .{}) catch |err| {
+        log.warn("failed to open theme '{s}': {}", .{ name_slice, err });
+        return false;
+    };
+    defer file.close();
+
+    return loadThemeFromFile(state, file);
 }
 
 export fn ghostty_renderer_load_theme_file(state: *RendererState, path: [*:0]const u8) bool {
-    _ = state;
-    _ = path;
-    log.warn("load_theme_file not yet implemented", .{});
-    return false;
+    const path_slice = std.mem.span(path);
+    if (path_slice.len == 0) return false;
+
+    const file = std.fs.cwd().openFile(path_slice, .{}) catch |err| {
+        log.warn("failed to open theme file '{s}': {}", .{ path_slice, err });
+        return false;
+    };
+    defer file.close();
+
+    return loadThemeFromFile(state, file);
+}
+
+fn parseHexColor(s: []const u8) ?terminal.color.RGB {
+    const hex = if (s.len > 0 and s[0] == '#') s[1..] else s;
+    if (hex.len != 6) return null;
+    return .{
+        .r = std.fmt.parseInt(u8, hex[0..2], 16) catch return null,
+        .g = std.fmt.parseInt(u8, hex[2..4], 16) catch return null,
+        .b = std.fmt.parseInt(u8, hex[4..6], 16) catch return null,
+    };
+}
+
+fn loadThemeFromFile(state: *RendererState, file: std.fs.File) bool {
+    var buf: [4096]u8 = undefined;
+    var reader = std.io.bufferedReader(file.reader());
+    var any_applied = false;
+
+    while (reader.reader().readUntilDelimiter(&buf, '\n')) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, &std.ascii.whitespace);
+        if (line.len == 0 or line[0] == '#') continue;
+
+        const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
+        const key = std.mem.trim(u8, line[0..eq_idx], &std.ascii.whitespace);
+        const value = std.mem.trim(u8, line[eq_idx + 1 ..], &std.ascii.whitespace);
+
+        if (std.mem.eql(u8, key, "palette")) {
+            // Format: N=#RRGGBB
+            const palette_eq = std.mem.indexOf(u8, value, "=") orelse continue;
+            const idx_str = std.mem.trim(u8, value[0..palette_eq], &std.ascii.whitespace);
+            const color_str = std.mem.trim(u8, value[palette_eq + 1 ..], &std.ascii.whitespace);
+            const idx = std.fmt.parseInt(u8, idx_str, 10) catch continue;
+            const rgb = parseHexColor(color_str) orelse continue;
+            if (state.terminal_set) {
+                state.render_state.terminal.colors.palette.set(idx, rgb);
+            }
+            any_applied = true;
+        } else if (std.mem.eql(u8, key, "background")) {
+            const rgb = parseHexColor(value) orelse continue;
+            ghostty_renderer_set_background(state, rgb.r, rgb.g, rgb.b);
+            any_applied = true;
+        } else if (std.mem.eql(u8, key, "foreground")) {
+            const rgb = parseHexColor(value) orelse continue;
+            ghostty_renderer_set_foreground(state, rgb.r, rgb.g, rgb.b);
+            any_applied = true;
+        }
+        // cursor-color, selection-background, etc. can be added later.
+    } else |_| {}
+
+    return any_applied;
 }
 
 // ================================================================
