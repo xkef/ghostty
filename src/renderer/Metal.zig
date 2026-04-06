@@ -93,10 +93,15 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
     };
 
     // Get the metadata about our underlying view that we'll be rendering to.
-    const info: ViewInfo = switch (apprt.runtime) {
+    // In standalone mode, use the explicit view_info from options.
+    // Otherwise, extract from the apprt surface.
+    const info: ViewInfo = if (opts.view_info) |vi| .{
+        .scaleFactor = vi.scale_factor,
+        .view = vi.view,
+    } else switch (apprt.runtime) {
         apprt.embedded => .{
-            .scaleFactor = @floatCast(opts.rt_surface.content_scale.x),
-            .view = switch (opts.rt_surface.platform) {
+            .scaleFactor = @floatCast(opts.rt_surface.?.content_scale.x),
+            .view = switch (opts.rt_surface.?.platform) {
                 .macos => |v| v.nsview,
                 .ios => |v| v.uiview,
             },

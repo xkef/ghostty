@@ -544,7 +544,7 @@ pub fn terminalOptions(self: *const Config) TerminalBuildOptions {
         .artifact = .ghostty,
         .simd = self.simd,
         .oniguruma = true,
-        .c_abi = false,
+        .c_abi = true,
         .version = self.version,
         .slow_runtime_safety = switch (self.optimize) {
             .Debug => true,
